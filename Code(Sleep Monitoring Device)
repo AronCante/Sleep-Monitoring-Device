@@ -1,0 +1,157 @@
+#include <Wire.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <WiFi.h>
+#include "ThingSpeak.h"
+#include "MAX30105.h"
+#include "heartRate.h"
+
+MAX30105 particleSensor;
+
+Adafruit_MPU6050 mpu;
+
+// Network credentials
+const char* ssid = "cante";
+const char* password = "76543210";
+WiFiClient client;
+
+// ThingSpeak channel details
+unsigned long myChannelNumber = 2392069;
+const char* myWriteAPIKey = "XH38JO87XJG9EVMM";
+
+
+
+const byte RATE_SIZE = 4;
+byte rates[RATE_SIZE]; // Array of heart rates
+byte rateSpot = 0;
+long lastBeat = 0; // Time at which the last beat occurred
+long lastUpdate = 0;  // Variable to store the last time ThingSpeak was updated
+
+float beatsPerMinute;
+int beatAvg;
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  Serial.println("Adafruit MPU6050 and MAX30105 test!");
+
+  // MPU6050 setup
+  if (!mpu.begin()) {
+    Serial.println("Failed to find MPU6050 chip");
+    while (1) {
+      delay(10);
+    }
+  }
+  
+  Serial.println("MPU6050 Found!");
+
+  // MAX30105 setup
+  if (!particleSensor.begin(Wire, 0x57)) {
+    Serial.println("MAX30105 was not found. Please check wiring/power.");
+    while (1);
+  }
+  Serial.println("Place your index finger on the sensor with steady pressure.");
+
+  particleSensor.setup();
+  particleSensor.setPulseAmplitudeRed(0x0A);
+  particleSensor.setPulseAmplitudeGreen(0);
+
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(10);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected to WiFi");
+
+  // Initialize ThingSpeak
+  ThingSpeak.begin(client);
+}
+
+void loop() {
+  // MPU6050 readings
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
+  // MAX30105 readings
+  long irValue = particleSensor.getIR();
+
+  if (checkForBeat(irValue) == true) {
+    long delta = millis() - lastBeat;
+    lastBeat = millis();
+
+    beatsPerMinute = 60 / (delta / 1000.0);
+
+    if (beatsPerMinute < 255 && beatsPerMinute > 20) {
+      rates[rateSpot++] = (byte)beatsPerMinute;
+      rateSpot %= RATE_SIZE;
+
+      // Calculate average of readings
+      beatAvg = 0;
+      for (byte x = 0; x < RATE_SIZE; x++)
+        beatAvg += rates[x];
+      beatAvg /= RATE_SIZE;
+    }
+  }
+
+  Serial.print("IR=");
+  Serial.print(irValue);
+  Serial.print(", BPM=");
+  Serial.print(beatsPerMinute);
+  Serial.print(", Avg BPM=");
+  Serial.print(beatAvg);
+
+
+  /* Print out the values */
+  Serial.print("Acceleration X: ");
+  Serial.print(a.acceleration.x);
+  Serial.print(", Y: ");
+  Serial.print(a.acceleration.y);
+  Serial.print(", Z: ");
+  Serial.print(a.acceleration.z);
+  Serial.println(" m/s^2");
+
+  Serial.print("Rotation X: ");
+  Serial.print(g.gyro.x);
+  Serial.print(", Y: ");
+  Serial.print(g.gyro.y);
+  Serial.print(", Z: ");
+  Serial.print(g.gyro.z);
+  Serial.println(" rad/s");
+
+  Serial.print("Temperature: ");
+  Serial.print(temp.temperature);
+  Serial.println(" degC");
+
+ // ThingSpeak update for heart rate values
+ if (millis() - lastUpdate >= 10000){
+  
+  // ThingSpeak update for accelerometer values
+   ThingSpeak.writeField(myChannelNumber, 1, beatsPerMinute, myWriteAPIKey);
+  ThingSpeak.writeField(myChannelNumber, 2, a.acceleration.x, myWriteAPIKey);
+  /*ThingSpeak.writeField(myChannelNumber, 2, a.acceleration.y, myWriteAPIKey);
+  ThingSpeak.writeField(myChannelNumber, 3, a.acceleration.z, myWriteAPIKey);
+
+  // ThingSpeak update for gyroscope values
+  ThingSpeak.writeField(myChannelNumber, 4, g.gyro.x, myWriteAPIKey);
+  ThingSpeak.writeField(myChannelNumber, 5, g.gyro.y, myWriteAPIKey);
+  ThingSpeak.writeField(myChannelNumber, 6, g.gyro.z, myWriteAPIKey);
+
+  // ThingSpeak update for temperature
+  ThingSpeak.writeField(myChannelNumber, 7, temp.temperature, myWriteAPIKey);
+
+  //delay(50); // Wait for 50 milliseconds
+*/
+  //ThingSpeak.writeField(myChannelNumber, 8, irValue, myWriteAPIKey);
+ 
+  //ThingSpeak.writeField(myChannelNumber, 10, beatAvg, myWriteAPIKey);
+     lastUpdate = millis();  // Update the last update time
+  }
+  if (irValue < 50000)
+    Serial.print(" No finger?");
+
+  Serial.println();
+
+  //delay(1950); // Wait for 1950 milliseconds (2 seconds) before the next loop
+}
